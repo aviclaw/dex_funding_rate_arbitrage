@@ -83,7 +83,12 @@ class LighterExchange(BaseExchange):
             await self._initialize_account()
     
     def _is_valid_private_key(self, private_key: str) -> bool:
-        """Validate private key format for Lighter."""
+        """Validate private key format for Lighter.
+        
+        Lighter supports both:
+        - Standard Ethereum private keys: 32 bytes (64 hex chars)
+        - Extended private keys: 40 bytes (80 hex chars, e.g., from HD wallets)
+        """
         try:
             # Remove '0x' prefix if present
             if private_key.startswith('0x'):
@@ -96,14 +101,14 @@ class LighterExchange(BaseExchange):
             # Must be valid hex
             int(private_key, 16)
 
-            # Validate decoded byte length explicitly (SignerClient expects 32 bytes)
+            # Validate decoded byte length
             try:
                 key_bytes = bytes.fromhex(private_key)
             except ValueError:
                 return False
 
-            # SignerClient expects 40 bytes (80 hex chars)
-            return len(key_bytes) == 40
+            # Lighter accepts 32 bytes (standard Ethereum) or 40 bytes (extended)
+            return len(key_bytes) in (32, 40)
             
         except (ValueError, TypeError):
             return False
@@ -149,7 +154,7 @@ class LighterExchange(BaseExchange):
                 if private_key:                    
                     # Validate private key format
                     if not self._is_valid_private_key(private_key):
-                        logger.error("Invalid private key format - must be 40 bytes (80 hex characters)")
+                        logger.error("Invalid private key format - must be 32 or 40 bytes (64 or 80 hex characters)")
                         self.signer_client = None
                     else:
                         try:
