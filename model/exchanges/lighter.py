@@ -27,9 +27,11 @@ class LighterExchange(BaseExchange):
         # Initialize WebSocket client if use_ws is True
         self.use_ws = use_ws
         if use_ws:
+            # Use only order book subscriptions (no account subscriptions to avoid HTTP 400 errors)
+            # Market IDs typically start from 1
             self.ws_client = LighterWebSocketClient(
-                order_book_ids=order_book_ids or [0, 1], 
-                account_ids=[1, 2]
+                order_book_ids=order_book_ids or [1, 2, 3], 
+                account_ids=[]  # Empty account_ids to avoid WebSocket connection issues
             )
         else:
             self.ws_client = None
@@ -153,9 +155,10 @@ class LighterExchange(BaseExchange):
                         try:
                             # Use the private key directly (SignerClient expects api_private_keys as dict)
                             # SDK v1.0+ uses api_private_keys: Dict[int, str] format
+                            # Note: api_private_keys maps API_KEY_INDEX to private key, not ACCOUNT_INDEX
                             self.signer_client = SignerClient(
                                 url=CONFIG.LIGHTER_API_URL,
-                                api_private_keys={CONFIG.LIGHTER_ACCOUNT_INDEX: private_key},
+                                api_private_keys={CONFIG.LIGHTER_API_KEY_INDEX: private_key},
                                 account_index=CONFIG.LIGHTER_ACCOUNT_INDEX,
                                 nonce_management_type=NonceManagerType.OPTIMISTIC
                             )
