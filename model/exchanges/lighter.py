@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Any, Callable, Tuple
 from utils.config import CONFIG
 from utils.logger import setup_logger
 from lighter import SignerClient
+from lighter.nonce_manager import NonceManagerType
 from datetime import datetime
 
 logger = setup_logger(__name__)
@@ -26,9 +27,11 @@ class LighterExchange(BaseExchange):
         # Initialize WebSocket client if use_ws is True
         self.use_ws = use_ws
         if use_ws:
+            # Use only order book subscriptions (no account subscriptions to avoid HTTP 400 errors)
+            # Market IDs typically start from 1
             self.ws_client = LighterWebSocketClient(
-                order_book_ids=order_book_ids or [0, 1], 
-                account_ids=[1, 2]
+                order_book_ids=order_book_ids or [1, 2, 3], 
+                account_ids=[]  # Empty account_ids to avoid WebSocket connection issues
             )
         else:
             self.ws_client = None
@@ -80,7 +83,12 @@ class LighterExchange(BaseExchange):
             await self._initialize_account()
     
     def _is_valid_private_key(self, private_key: str) -> bool:
-        """Validate private key format for Lighter."""
+        """Validate private key format for Lighter.
+        
+        Lighter supports both:
+        - Standard Ethereum private keys: 32 bytes (64 hex chars)
+        - Extended private keys: 40 bytes (80 hex chars, e.g., from HD wallets)
+        """
         try:
             # Remove '0x' prefix if present
             if private_key.startswith('0x'):
@@ -93,14 +101,14 @@ class LighterExchange(BaseExchange):
             # Must be valid hex
             int(private_key, 16)
 
-            # Validate decoded byte length explicitly (SignerClient expects 32 bytes)
+            # Validate decoded byte length
             try:
                 key_bytes = bytes.fromhex(private_key)
             except ValueError:
                 return False
 
-            # SignerClient expects 40 bytes (80 hex chars)
-            return len(key_bytes) == 40
+            # Lighter accepts 32 bytes (standard Ethereum) or 40 bytes (extended)
+            return len(key_bytes) in (32, 40)
             
         except (ValueError, TypeError):
             return False
@@ -146,16 +154,18 @@ class LighterExchange(BaseExchange):
                 if private_key:                    
                     # Validate private key format
                     if not self._is_valid_private_key(private_key):
-                        logger.error("Invalid private key format - must be 40 bytes (80 hex characters)")
+                        logger.error("Invalid private key format - must be 32 or 40 bytes (64 or 80 hex characters)")
                         self.signer_client = None
                     else:
                         try:
-                            # Use the private key directly (SignerClient expects 40 bytes)
+                            # Use the private key directly (SignerClient expects api_private_keys as dict)
+                            # SDK v1.0+ uses api_private_keys: Dict[int, str] format
+                            # Note: api_private_keys maps API_KEY_INDEX to private key, not ACCOUNT_INDEX
                             self.signer_client = SignerClient(
                                 url=CONFIG.LIGHTER_API_URL,
-                                private_key=private_key,
+                                api_private_keys={CONFIG.LIGHTER_API_KEY_INDEX: private_key},
                                 account_index=CONFIG.LIGHTER_ACCOUNT_INDEX,
-                                api_key_index=CONFIG.LIGHTER_API_KEY_INDEX
+                                nonce_management_type=NonceManagerType.OPTIMISTIC
                             )
                             logger.info("Lighter SignerClient initialized successfully")
                         except Exception as e:
@@ -465,7 +475,7 @@ class LighterExchange(BaseExchange):
     async def get_public_pools(self, filter: str = "all", limit: int = 10, index: int = 0):
         """Get public pools"""
         try:
-            return await self.account_api.public_pools(filter=filter, limit=limit, index=index)
+            return await self.account_api.public_pools_metadata(filter=filter, limit=limit, index=index)
         except Exception as e:
             logger.error(f"Failed to get public pools: {e}")
             raise
